@@ -7,25 +7,33 @@ LANE_ROI = (659, 0, 120, 779)
 MIN_FRAMES_TO_VALIDATE = 20  # Persistence threshold TODO calibrate
 TOP_ZONE_PERCENT = 0.1      # Must start in top 10% of ROI
 MAX_X_DRIFT = 20            # Max horizontal pixel shift between frames
-MAX_VELOCITY = 50          # Max pixels per frame, tolerant for missed frames
+MAX_VELOCITY = 60             # Max distance to look for next match, accounting for missed frames
 MAX_MISSED_FRAMES = 3       # Grace period for flickering
 MIN_SIZE = 5 # TODO Calibrate
 MAX_SIZE = 50000 # TODO Calibrate
 
+# --- Colors (BGR) ---
+COLOR_TOO_SMALL = (255, 0, 0)      # Blue
+COLOR_TOO_BIG = (147, 20, 255)     # Pink
+COLOR_NEW_CANDIDATE = (144, 238, 144) # Light Green
+COLOR_DELETED = (0, 0, 255)        # Red
+COLOR_SUCCESS = (0, 255, 0)        # Solid Green
+COLOR_TRACKING = (0, 255, 255)     # Yellow
+COLOR_ROI = (255, 0, 0)            # Blue for ROI box
+
 class FallingCandidate:
-    def __init__(self, initial_pos, initial_frame, roi_h):
+    def __init__(self, initial_pos, initial_frame):
         self.positions = [initial_pos] # List of (x, y)
         self.start_frame = initial_frame
         self.missed_frames = 0
         self.is_valid = False
         self.is_dead = False
-        self.roi_h = roi_h
 
     def update(self, new_pos):
         prev_x, prev_y = self.positions[-1]
         new_x, new_y = new_pos
         
-        # Check downward motion and horizontal drift
+        # Kinematic Check: Must move DOWN (new_y > prev_y) and within X drift limits
         if new_y > prev_y and abs(new_x - prev_x) < MAX_X_DRIFT:
             self.positions.append(new_pos)
             self.missed_frames = 0
@@ -61,23 +69,6 @@ def process_frame(roi_frame, backSub):
     mask = cv2.dilate(mask, kernel, iterations=2)
     return mask
 
-def find_best_candidate(contours, x_offset, y_offset):
-    """Filters contours and returns the most likely falling object."""
-    candidates = []
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        if 50 < area < 500000:
-            mx, my, mw, mh = cv2.boundingRect(cnt)
-            cx = mx + x_offset + mw // 2
-            cy = my + y_offset + mh // 2
-            candidates.append({'pos': (cx, cy), 'area': area, 'bbox': (mx + x_offset, my + y_offset, mw, mh)})
-    
-    # Simple heuristic: return the lowest object (largest y) if multiple exist, 
-    # or implement velocity tracking here.
-    if not candidates:
-        return None
-    return max(candidates, key=lambda c: c['pos'][1])
-
 def main():
     cap = cv2.VideoCapture(VIDEO_PATH)
     lane_roi = initialize_roi(cap, LANE_ROI)
@@ -95,59 +86,93 @@ def main():
         if not paused:
             ret, frame = cap.read()
             if not ret: break
-            current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+            current_frame_num = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
 
             # 1. Pre-process
             roi_frame = frame[y:y+h, x:x+w]
             fg_mask = process_frame(roi_frame, backSub)
 
-            # 2. Detect objects that are not background
+            # 2. Detect and Filter by Size
             contours, _ = cv2.findContours(fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             current_detections = []
-            matched_detections = set()
-            # Filter detections by size
             for cnt in contours:
-                if MIN_SIZE < cv2.contourArea(cnt) < MAX_SIZE:
-                    mx, my, mw, mh = cv2.boundingRect(cnt)
-                    current_detections.append((mx + x + mw//2, my + y + mh//2))
-                    
+                area = cv2.contourArea(cnt)
+                mx, my, mw, mh = cv2.boundingRect(cnt)
+                # Calculate absolute coordinates on the main frame
+                abs_x, abs_y = mx + x, my + y
+                
+                if area < MIN_SIZE:
+                    # Visualization: Blue for too small
+                    cv2.rectangle(frame, (abs_x, abs_y), (abs_x + mw, abs_y + mh), COLOR_TOO_SMALL, 1)
+                elif area > MAX_SIZE:
+                    # Visualization: Pink for too big
+                    cv2.rectangle(frame, (abs_x, abs_y), (abs_x + mw, abs_y + mh), COLOR_TOO_BIG, 1)
+                else:
+                    # Valid size candidate
+                    current_detections.append((abs_x + mw//2, abs_y + mh//2))
+
+            matched_detections_indices = set()
             
             # Update candidates if they continue or are gone
             for cand in candidates:
                 best_dist = float('inf')
-                best_match = None
-                
+                best_match_idx = None
+
+                # Find nearest detection within MAX_VELOCITY radius                
                 for i, det in enumerate(current_detections):
                     dist = np.linalg.norm(np.array(det) - np.array(cand.positions[-1]))
                     if dist < MAX_VELOCITY and dist < best_dist: # Distance gate
                         best_dist = dist
-                        best_match = i # TODO two objects merge into one
+                        best_match_idx = i # TODO two objects merge into one
                 
-                if best_match is not None:
-                    if cand.update(current_detections[best_match]):
-                        matched_detections.add(best_match)
+                if best_match_idx is not None:
+                    # Try to update. If update fails (e.g. moved up), treat as missed frame.
+                    if cand.update(current_detections[best_match_idx]):
+                        matched_detections_indices.add(best_match_idx)
+                    else:
+                         cand.increment_missed()
                 else:
                     cand.increment_missed()
-            
-            # Cleanup: Move valid ones to final, remove dead ones could be done while looping above but whatever
-            for cand in candidates[:]:
-                if cand.is_dead:
-                    if cand.is_valid:
-                        final_measurements.append(cand.positions)
-                        print(f"Recorded measurement with {len(cand.positions)} points.")
-                candidates.remove(cand)
-            
+                    
             # Check for new candidates
             for i, det in enumerate(current_detections):
-                if i not in matched_detections:
+                if i not in matched_detections_indices:
                     if (det[1] - y) < (h * TOP_ZONE_PERCENT):
-                        candidates.append(FallingCandidate(det, current_frame, h))
-
+                        candidates.append(FallingCandidate(det, current_frame_num))
+                        # Visualization: Light Green hollow circle for new birth
+                        cv2.circle(frame, det, 15, COLOR_NEW_CANDIDATE, 2)
+            
+            # Cleanup: Move valid ones to final, remove dead ones could be done while looping above but whatever
+            for i in range(len(candidates) - 1, -1, -1):
+                cand = candidates[i]
+                last_pos = cand.positions[-1]                
+                if cand.is_dead:
+                    if cand.is_valid:
+                        # Visualization: SUCCESS (Solid Green Circle)
+                        final_measurements.append(cand.positions)
+                        print(f"Frame {current_frame_num}: Saved measurement ({len(cand.positions)} pts)")
+                        cv2.circle(frame, last_pos, 20, COLOR_SUCCESS, -1) 
+                    else:
+                        # Visualization: DELETED/FAILED (Red X)
+                        cv2.putText(frame, "X", (last_pos[0]-15, last_pos[1]+15), cv2.FONT_HERSHEY_COMPLEX, 1.5, COLOR_DELETED, 3)
+                    candidates.pop(i)
 
             # 4. Visualize
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+            for cand in candidates:
+                # Draw trail line
+                if len(cand.positions) > 1:
+                    for j in range(1, len(cand.positions)):
+                        cv2.line(frame, cand.positions[j-1], cand.positions[j], COLOR_TRACKING, 2)
+                # Draw head dot
+                cv2.circle(frame, cand.positions[-1], 5, COLOR_TRACKING, -1)
+
+            # Draw ROI box
+            cv2.rectangle(frame, (x, y), (x + w, y + h), COLOR_ROI, 2)
+            
+            # Info Overlay
+            cv2.putText(frame, f"Active: {len(candidates)} Saved: {len(final_measurements)}", 
+                        (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLOR_TRACKING, 2)
             cv2.imshow('Tracker', frame)
-            cv2.imshow('Mask', fg_mask)
 
         key = cv2.waitKey(30) & 0xFF
         if key == ord('q'): break
