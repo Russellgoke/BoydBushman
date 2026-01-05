@@ -3,13 +3,14 @@ import numpy as np
 
 # --- Configuration ---
 VIDEO_PATH = r'Videos\35cropped.mov'
-LANE_ROI = (659, 0, 130, 779)
+LANE_ROI = (659, 0, 130, 749)
 MIN_FRAMES_TO_VALIDATE = 20  # Persistence threshold TODO calibrate
 TOP_ZONE_PERCENT = 0.1      # Must start in top 10% of ROI
 MAX_X_DRIFT = 20            # Max horizontal pixel shift between frames
 MAX_VELOCITY = 60             # Max distance to look for next match, accounting for missed frames
 MAX_MISSED_FRAMES = 3       # Grace period for flickering
-MIN_SIZE = 1000 # TODO Calibrate
+MIN_SIZE = 1200 # TODO Calibrate
+MAX_SIZE = 2800
 
 BACKGROUND_WINDOW_WIDTH = 5
 
@@ -79,7 +80,7 @@ def main():
     
     candidates = []
     final_measurements = []
-    print("Controls: 'space': Pause/Play, 'd': Step Forward, 'a': Step Backward, 'r': Reset, 'q': Quit")
+    print("Controls: 'space': Pause/Play, 'd': Step Forward, 'a': Step Backward, 'f': Step Forward 20 frames, 'r': Reset, 'q': Quit")
 
     while cap.isOpened():
         ret, frame = cap.read()
@@ -96,16 +97,25 @@ def main():
         for cnt in contours:
             area = cv2.contourArea(cnt)
             mx, my, mw, mh = cv2.boundingRect(cnt)
-            # Calculate absolute coordinates on the main frame
-            abs_x, abs_y = mx + x, my + y
-            
+            abs_x, abs_y = mx + x, my + y   
             if area < MIN_SIZE:
                 # Visualization: Blue for too small
                 cv2.rectangle(frame, (abs_x, abs_y), (abs_x + mw, abs_y + mh), COLOR_TOO_SMALL, 1)
-            else:
-                # Valid size candidate
-                cv2.rectangle(frame, (abs_x, abs_y), (abs_x + mw, abs_y + mh), COLOR_TRACKING, 1)
-                current_detections.append((abs_x + mw//2, abs_y + mh//2))
+                continue
+            if area > MAX_SIZE:
+                # Visualization: Pink for too big
+                cv2.rectangle(frame, (abs_x, abs_y), (abs_x + mw, abs_y + mh), COLOR_TOO_BIG, 1)
+                continue
+            M = cv2.moments(cnt)
+            if M["m00"] != 0:
+                # Calculate Centroid (CX, CY)
+                cx = int(M["m10"] / M["m00"]) + x
+                cy = int(M["m01"] / M["m00"]) + y
+                
+                # current_detections now uses the centroid, not the box center
+                current_detections.append((cx, cy))
+            cv2.rectangle(frame, (abs_x, abs_y), (abs_x + mw, abs_y + mh), COLOR_TRACKING, 1)
+            cv2.circle(frame, (cx, cy), 3, COLOR_TRACKING, -1)            # Calculate absolute coordinates on the main frame
 
         matched_detections_indices = set()
         
@@ -177,9 +187,15 @@ def main():
                 break
             elif key == ord('d'): # Step Forward
                 break 
+            elif key == ord('f'): #step 20
+                cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame_num + 20)
+                break
             elif key == ord('a'): # Step Backward
                 # Set to current frame - 2 because the next loop iteration will cap.read() + 1
                 cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, current_frame_num - 2))
+                break
+            elif key == ord('q'): # Step Backward 20
+                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, current_frame_num - 20))
                 break
             elif key == ord('r'):
                 backSub = cv2.createBackgroundSubtractorMOG2(history=BACKGROUND_WINDOW_WIDTH, varThreshold=40)
