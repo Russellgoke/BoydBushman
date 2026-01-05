@@ -5,11 +5,13 @@ import numpy as np
 VIDEO_PATH = r'Videos\35cropped.mov'
 LANE_ROI = (659, 0, 130, 779)
 MIN_FRAMES_TO_VALIDATE = 20  # Persistence threshold TODO calibrate
-TOP_ZONE_PERCENT = 0.2      # Must start in top 10% of ROI
+TOP_ZONE_PERCENT = 0.1      # Must start in top 10% of ROI
 MAX_X_DRIFT = 20            # Max horizontal pixel shift between frames
 MAX_VELOCITY = 60             # Max distance to look for next match, accounting for missed frames
 MAX_MISSED_FRAMES = 3       # Grace period for flickering
 MIN_SIZE = 1000 # TODO Calibrate
+
+BACKGROUND_WINDOW_WIDTH = 5
 
 # --- Colors (BGR) ---
 COLOR_TOO_SMALL = (255, 0, 0)      # Blue
@@ -70,7 +72,7 @@ def main():
     lane_roi = initialize_roi(cap, LANE_ROI)
     if lane_roi is None: return
 
-    backSub = cv2.createBackgroundSubtractorMOG2(history=100, varThreshold=40, detectShadows=False)
+    backSub = cv2.createBackgroundSubtractorMOG2(history=BACKGROUND_WINDOW_WIDTH, varThreshold=40, detectShadows=False)
     
     paused = True
     x, y, w, h = [int(v) for v in lane_roi]
@@ -180,7 +182,7 @@ def main():
                 cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, current_frame_num - 2))
                 break
             elif key == ord('r'):
-                backSub = cv2.createBackgroundSubtractorMOG2(history=100, varThreshold=40)
+                backSub = cv2.createBackgroundSubtractorMOG2(history=BACKGROUND_WINDOW_WIDTH, varThreshold=40)
                 break
             elif key == ord('q'):
                 cap.release()
