@@ -4,6 +4,7 @@ import numpy as np
 from datetime import datetime  # Added for timestamping
 
 #TODO sometimes splits into two objects idk why, if one is still wide enough fail
+START_FRAME = 27091
 
 # --- Configuration ---
 VIDEO_PATH = r'Videos\35cropped.mov'
@@ -107,6 +108,7 @@ def main():
     final_measurements = []
     print("Controls: 'space': Pause/Play, 'a': Step Backwards 20, 's': Step Backward, 'd': Step Forward, 'f': Step Forward 20 frames, 'r': Reset, 'q': Quit")
 
+    cap.set(cv2.CAP_PROP_POS_FRAMES, START_FRAME)
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret: break
