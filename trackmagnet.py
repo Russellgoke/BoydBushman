@@ -1,5 +1,9 @@
 import cv2
+import csv
 import numpy as np
+from datetime import datetime  # Added for timestamping
+
+#TODO sometimes splits into two objects idk why, if one is still wide enough fail
 
 # --- Configuration ---
 VIDEO_PATH = r'Videos\35cropped.mov'
@@ -9,8 +13,11 @@ TOP_ZONE_PERCENT = 0.1      # Must start in top 10% of ROI
 MAX_X_DRIFT = 20            # Max horizontal pixel shift between frames
 MAX_VELOCITY = 60             # Max distance to look for next match, accounting for missed frames
 MAX_MISSED_FRAMES = 3       # Grace period for flickering
-MIN_WIDTH = 50   # Added minimum width
+MIN_WIDTH = 53   # Added minimum width
 MIN_HEIGHT = 30  # Added minimum height
+
+TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
+OUTPUT_CSV = f'trajectories_{TIMESTAMP}.csv'
 
 BACKGROUND_WINDOW_WIDTH = 5
 
@@ -67,6 +74,24 @@ def process_frame(roi_frame, backSub):
     mask = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, kernel)
     mask = cv2.dilate(mask, kernel, iterations=2)
     return mask
+
+def save_to_csv(measurements):
+    """Saves all trajectories to a CSV file including the start frame."""
+    if not measurements:
+        print("No valid trajectories to save.")
+        return
+
+    with open(OUTPUT_CSV, mode='w', newline='') as f:
+        writer = csv.writer(f)
+        # Added 'start_frame' to header
+        writer.writerow(['trajectory_id', 'start_frame', 'point_index', 'x', 'y'])
+        for t_id, data in enumerate(measurements):
+            start_frame = data['start_frame']
+            path = data['positions']
+            for p_idx, (px, py) in enumerate(path):
+                writer.writerow([t_id, start_frame, p_idx, px, py])
+    
+    print(f"Successfully saved {len(measurements)} trajectories to {OUTPUT_CSV}")
 
 def main():
     cap = cv2.VideoCapture(VIDEO_PATH)
@@ -153,7 +178,10 @@ def main():
             if cand.is_dead:
                 if cand.is_valid:
                     # Visualization: SUCCESS (Solid Green Circle)
-                    final_measurements.append(cand.positions)
+                    final_measurements.append({
+                        'positions': cand.positions,
+                        'start_frame': cand.start_frame
+                    })                    
                     print(f"Frame {current_frame_num}: Saved measurement ({len(cand.positions)} pts)")
                     cv2.rectangle(frame, (last_pos[0]-20, last_pos[1]-20), (last_pos[0]+20, last_pos[1]+20), COLOR_SUCCESS, 3)      
                 else:
@@ -202,6 +230,7 @@ def main():
             elif key == ord('q'):
                 cap.release()
                 cv2.destroyAllWindows()
+                save_to_csv(final_measurements)
                 return
             
             # If not paused, exit the inner loop to process the next frame automatically
@@ -210,6 +239,7 @@ def main():
 
     cap.release()
     cv2.destroyAllWindows()
+    save_to_csv(final_measurements)
 
 if __name__ == "__main__":
     main()
