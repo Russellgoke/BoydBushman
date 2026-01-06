@@ -3,73 +3,107 @@ import matplotlib.pyplot as plt
 import os
 import argparse
 import glob
+import numpy as np
+import mplcursors  # Used for hover-based information
+
+# --- Manual Configuration ---
+PLOT_X = False
+PLOT_Y = True
+PLOT_ACCEL = False
 
 def get_csv_files(inputs):
-    """Collects all CSV files from a list of files and folders."""
     csv_files = []
     for item in inputs:
         if os.path.isfile(item) and item.endswith('.csv'):
             csv_files.append(item)
         elif os.path.isdir(item):
-            # Get only first-level CSV files in the folder
             folder_files = glob.glob(os.path.join(item, "*.csv"))
             csv_files.extend(folder_files)
-    return sorted(list(set(csv_files))) # Remove duplicates and sort
+    return sorted(list(set(csv_files)))
 
 def plot_trajectories(file_list):
     if not file_list:
-        print("No CSV files found to plot.")
+        print("No CSV files found.")
         return
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
-    
-    total_trajectories = 0
+    data_to_plot = {'x': [], 'y': [], 'accel': []}
 
     for file in file_list:
         try:
             df = pd.read_csv(file)
-            filename = os.path.basename(file)
-            
-            # Group by trajectory_id to plot individual drops
+            fname = os.path.basename(file)
             for traj_id, group in df.groupby('trajectory_id'):
-                # 'point_index' represents time steps (frames relative to start)
-                time = group['point_index']
+                time = group['point_index'].values
+                x_pos = group['x'].values
+                y_pos = group['y'].values
+                # Extract the start frame (assumes it's a column in your CSV)
+                start_frame = group['start_frame'].iloc[0] if 'start_frame' in group.columns else "N/A"
                 
-                # Plot X vs Time
-                ax1.plot(time, group['x'], alpha=0.6, label=f"{filename} ID:{traj_id}")
+                label = f"File: {fname}\nID: {traj_id}\nStart Frame: {start_frame}"
                 
-                # Plot Y vs Time
-                ax2.plot(time, group['y'], alpha=0.6)
-                
-                total_trajectories += 1
+                if PLOT_X:
+                    data_to_plot['x'].append((time, x_pos, label))
+                if PLOT_Y:
+                    data_to_plot['y'].append((time, y_pos, label))
+                if PLOT_ACCEL:
+                    accel_y = np.diff(y_pos, n=2)
+                    time_accel = time[2:]
+                    data_to_plot['accel'].append((time_accel, accel_y, label))
+                    
         except Exception as e:
             print(f"Error processing {file}: {e}")
 
-    # Formatting X plot
-    ax1.set_ylabel('X Position (px)')
-    ax1.set_title('Horizontal Drift (X) vs Time')
-    ax1.grid(True, linestyle='--', alpha=0.7)
+    # Helper function to set up interactive hovering
+    def setup_interaction(title, data_list, ylabel, invert_y=False):
+        fig, ax = plt.subplots(num=title, figsize=(10, 6))
+        for t, val, lbl in data_list:
+            ax.plot(t, val, alpha=0.4, label=lbl) # Plot lines with some transparency
+        
+        ax.set_title(title)
+        ax.set_ylabel(ylabel)
+        ax.set_xlabel("Frame Index (Relative)")
+        ax.grid(True, alpha=0.3)
+        if invert_y:
+            ax.invert_yaxis()
+        
+        # Use mplcursors to show label on hover
+        cursor = mplcursors.cursor(ax.get_lines(), hover=True)
+        
+        @cursor.connect("add")
+        def _(sel):
+            # Show the label we defined earlier
+            sel.annotation.set_text(sel.artist.get_label())
+            # Briefly highlight the line
+            sel.artist.set_alpha(1.0)
+            sel.artist.set_linewidth(2.5)
 
-    # Formatting Y plot
-    ax2.set_ylabel('Y Position (px)')
-    ax2.set_xlabel('Relative Frame Index (Time)')
-    ax2.set_title('Vertical Fall (Y) vs Time')
-    ax2.invert_yaxis()  # Invert so falling down looks like it's going down
-    ax2.grid(True, linestyle='--', alpha=0.7)
+        @cursor.connect("remove")
+        def _(sel):
+            sel.artist.set_alpha(0.4)
+            sel.artist.set_linewidth(1.5)
 
-    plt.tight_layout()
-    print(f"Plotted {total_trajectories} trajectories from {len(file_list)} files.")
-    plt.show()
+        plt.tight_layout()
+
+    # Trigger independent windows
+    if PLOT_X and data_to_plot['x']:
+        setup_interaction("X Position", data_to_plot['x'], "X Position (px)")
+
+    if PLOT_Y and data_to_plot['y']:
+        setup_interaction("Y Position", data_to_plot['y'], "Y Position (px)", invert_y=True)
+
+    if PLOT_ACCEL and data_to_plot['accel']:
+        setup_interaction("Y Acceleration", data_to_plot['accel'], "Acceleration (px/fr²)")
+
+    if any([PLOT_X, PLOT_Y, PLOT_ACCEL]):
+        print("Hover over lines to see file, ID, and start frame.")
+        plt.show()
+    else:
+        print("No plots selected.")
 
 if __name__ == "__main__":
-    # You can pass paths via CLI or hardcode them in the list below
-    # Example: python plot_drops.py my_data_folder/ run1.csv
     parser = argparse.ArgumentParser()
-    parser.add_argument('paths', nargs='*', help='List of files or folders')
+    parser.add_argument('paths', nargs='*')
     args = parser.parse_args()
-
-    # If no CLI args provided, it looks in the current directory
     input_paths = args.paths if args.paths else ["."]
-    
-    files_to_plot = get_csv_files(input_paths)
-    plot_trajectories(files_to_plot)
+    files = get_csv_files(input_paths)
+    plot_trajectories(files)
