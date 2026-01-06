@@ -9,14 +9,14 @@ TOP_ZONE_PERCENT = 0.1      # Must start in top 10% of ROI
 MAX_X_DRIFT = 20            # Max horizontal pixel shift between frames
 MAX_VELOCITY = 60             # Max distance to look for next match, accounting for missed frames
 MAX_MISSED_FRAMES = 3       # Grace period for flickering
-MIN_SIZE = 1200 # TODO Calibrate
-MAX_SIZE = 2800
+MIN_WIDTH = 50   # Added minimum width
+MIN_HEIGHT = 30  # Added minimum height
 
 BACKGROUND_WINDOW_WIDTH = 5
 
 # --- Colors (BGR) ---
-COLOR_TOO_SMALL = (255, 0, 0)      # Blue
-COLOR_TOO_BIG = (147, 20, 255)     # Pink
+COLOR_TOO_SKINNY = (255, 0, 0)      # Blue
+COLOR_TOO_SHORT = (147, 20, 255)     # Pink
 COLOR_NEW_CANDIDATE = (144, 238, 144) # Light Green
 COLOR_DELETED = (0, 0, 255)        # Red
 COLOR_SUCCESS = (0, 255, 0)        # Solid Green
@@ -80,7 +80,7 @@ def main():
     
     candidates = []
     final_measurements = []
-    print("Controls: 'space': Pause/Play, 'd': Step Forward, 'a': Step Backward, 'f': Step Forward 20 frames, 'r': Reset, 'q': Quit")
+    print("Controls: 'space': Pause/Play, 'a': Step Backwards 20, 's': Step Backward, 'd': Step Forward, 'f': Step Forward 20 frames, 'r': Reset, 'q': Quit")
 
     while cap.isOpened():
         ret, frame = cap.read()
@@ -95,16 +95,15 @@ def main():
         contours, _ = cv2.findContours(fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         current_detections = []
         for cnt in contours:
-            area = cv2.contourArea(cnt)
             mx, my, mw, mh = cv2.boundingRect(cnt)
             abs_x, abs_y = mx + x, my + y   
-            if area < MIN_SIZE:
-                # Visualization: Blue for too small
-                cv2.rectangle(frame, (abs_x, abs_y), (abs_x + mw, abs_y + mh), COLOR_TOO_SMALL, 1)
+            if mw < MIN_WIDTH:
+                # Visualization: Blue for too skinny
+                cv2.rectangle(frame, (abs_x, abs_y), (abs_x + mw, abs_y + mh), COLOR_TOO_SKINNY, 1)
                 continue
-            if area > MAX_SIZE:
-                # Visualization: Pink for too big
-                cv2.rectangle(frame, (abs_x, abs_y), (abs_x + mw, abs_y + mh), COLOR_TOO_BIG, 1)
+            if mh < MIN_HEIGHT:
+                # Visualization: Pink for too short
+                cv2.rectangle(frame, (abs_x, abs_y), (abs_x + mw, abs_y + mh), COLOR_TOO_SHORT, 1)
                 continue
             M = cv2.moments(cnt)
             if M["m00"] != 0:
@@ -185,17 +184,17 @@ def main():
             if key == ord(' '):
                 paused = not paused
                 break
+            elif key == ord('a'): # Step Backward 20
+                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, current_frame_num - 20))
+                break
+            elif key == ord('s'): # Step Backward
+                # Set to current frame - 2 because the next loop iteration will cap.read() + 1
+                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, current_frame_num - 2))
+                break
             elif key == ord('d'): # Step Forward
                 break 
             elif key == ord('f'): #step 20
                 cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame_num + 20)
-                break
-            elif key == ord('a'): # Step Backward
-                # Set to current frame - 2 because the next loop iteration will cap.read() + 1
-                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, current_frame_num - 2))
-                break
-            elif key == ord('q'): # Step Backward 20
-                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, current_frame_num - 20))
                 break
             elif key == ord('r'):
                 backSub = cv2.createBackgroundSubtractorMOG2(history=BACKGROUND_WINDOW_WIDTH, varThreshold=40)
