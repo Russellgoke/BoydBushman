@@ -43,8 +43,8 @@ class FallingCandidate:
         _, prev_x, prev_y = self.positions[-1]
         new_x, new_y = new_pos
         
-        # Kinematic Check: Must move DOWN (new_y > prev_y) and within X drift limits
-        if new_y > prev_y and abs(new_x - prev_x) < MAX_X_DRIFT:
+        # Kinematic Check: Must move UP (new_y < prev_y) and within X drift limits
+        if new_y < prev_y and abs(new_x - prev_x) < MAX_X_DRIFT:
             self.positions.append((frame_num, new_x, new_y))
             self.missed_frames = 0
             if len(self.positions) >= MIN_FRAMES_TO_VALIDATE:
