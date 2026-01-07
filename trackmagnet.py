@@ -4,10 +4,12 @@ import numpy as np
 from datetime import datetime  # Added for timestamping
 
 #TODO sometimes splits into two objects idk why, if one is still wide enough fail
-START_FRAME = 0
+START_FRAME = 3515
 
 # --- Configuration ---
 VIDEO_PATH = r'Videos\35cropped.mov'
+# VIDEO_PATH = r'Videos\MVI_1636.MP4'
+
 LANE_ROI = (659, 0, 130, 749)
 MIN_FRAMES_TO_VALIDATE = 20  # Persistence threshold TODO calibrate
 TOP_ZONE_PERCENT = 0.1      # Must start in top 10% of ROI
@@ -82,6 +84,10 @@ def save_to_csv(measurements):
         return
 
     with open(OUTPUT_CSV, mode='w', newline='') as f:
+        # Write metadata comment
+        f.write(f"#META: VIDEO={VIDEO_PATH}, ROI={LANE_ROI}, TIMESTAMP={TIMESTAMP}\n")
+        # Placeholder for outliers (user can edit this line)
+        f.write("#OUTLIERS:\n")
         writer = csv.writer(f)
         writer.writerow(['trajectory_id', 'point_index', 'frame_num', 'x', 'y'])
         for t_id, positions in enumerate(measurements):
@@ -127,6 +133,9 @@ def main():
             if mh < MIN_HEIGHT:
                 # Visualization: Pink for too short
                 cv2.rectangle(frame, (abs_x, abs_y), (abs_x + mw, abs_y + mh), COLOR_TOO_SHORT, 1)
+                continue
+            # Skip if bounding box touches bottom of ROI (object clipping through edge)
+            if my + mh >= h:
                 continue
             M = cv2.moments(cnt)
             if M["m00"] != 0:

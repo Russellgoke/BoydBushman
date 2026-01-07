@@ -9,8 +9,8 @@ import re
 
 # --- Manual Configuration ---
 PLOT_X = False
-PLOT_Y = True
-PLOT_ACCEL = False
+PLOT_Y = False
+PLOT_ACCEL = True
 
 def get_csv_files(inputs):
     csv_files = []
@@ -23,22 +23,27 @@ def get_csv_files(inputs):
     return sorted(list(set(csv_files)))
 
 def parse_ignore_ids(file_path):
-    """Read first line and extract IDs to ignore if it's a comment."""
+    """Read comment lines and extract IDs to ignore from #OUTLIERS: lines."""
     ignore_ids = set()
     with open(file_path, 'r') as f:
-        first_line = f.readline().strip()
-        if first_line.startswith('#'):
-            # Remove the # and parse comma/space separated IDs
-            content = first_line[1:].strip()
-            # Split by comma, semicolon, or whitespace
-            parts = re.split(r'[,;\s]+', content)
-            for part in parts:
-                part = part.strip()
-                if part:
-                    try:
-                        ignore_ids.add(int(part))
-                    except ValueError:
-                        raise ValueError(f"Invalid ID format in {file_path}: {part}")
+        for line in f:
+            line = line.strip()
+            if not line.startswith('#'):
+                break  # Stop at first non-comment line (header)
+            if line.upper().startswith('#OUTLIERS:'):
+                # Extract content after #OUTLIERS:
+                content = line[len('#OUTLIERS:'):].strip()
+                if not content:
+                    continue
+                # Split by comma, semicolon, or whitespace
+                parts = re.split(r'[,;\s]+', content)
+                for part in parts:
+                    part = part.strip()
+                    if part:
+                        try:
+                            ignore_ids.add(int(part))
+                        except ValueError:
+                            raise ValueError(f"Invalid ID format in {file_path}: {part}")
     return ignore_ids
 
 def plot_trajectories(file_list):
