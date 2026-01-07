@@ -4,13 +4,13 @@ import numpy as np
 from datetime import datetime  # Added for timestamping
 
 #TODO sometimes splits into two objects idk why, if one is still wide enough fail
-START_FRAME = 3515
+START_FRAME = 3000
 
 # --- Configuration ---
-VIDEO_PATH = r'Videos\35cropped.mov'
-# VIDEO_PATH = r'Videos\MVI_1636.MP4'
+# VIDEO_PATH = r'Videos\35cropped.mov'
+VIDEO_PATH = r'Videos\MVI_1636.MP4'
 
-LANE_ROI = (659, 0, 130, 749)
+LANE_ROI = (639, 0, 113, 745)
 MIN_FRAMES_TO_VALIDATE = 20  # Persistence threshold TODO calibrate
 TOP_ZONE_PERCENT = 0.1      # Must start in top 10% of ROI
 MAX_X_DRIFT = 20            # Max horizontal pixel shift between frames
@@ -66,6 +66,7 @@ def initialize_roi(cap, default_roi):
         print("Select the vertical lane, then press SPACE.")
         roi = cv2.selectROI("Select Drop Lane", first_frame, fromCenter=False)
         cv2.destroyWindow("Select Drop Lane")
+        print(f"Selected ROI: ({roi[0]}, {roi[1]}, {roi[2]}, {roi[3]})")
         return roi
     return default_roi
 
