@@ -78,8 +78,19 @@ def plot_trajectories(file_list):
                 if PLOT_Y:
                     data_to_plot['y'].append((time, y_pos, label))
                 if PLOT_ACCEL:
-                    accel_y = np.diff(y_pos, n=2)
-                    time_accel = time[2:]
+                    # Calculate velocity accounting for frame gaps: v = dy/dt
+                    dt = np.diff(time)  # Frame differences (usually 1, but more if skipped)
+                    dy = np.diff(y_pos)
+                    velocity = dy / dt  # pixels per frame
+                    
+                    # Calculate acceleration: a = dv/dt
+                    # Time for velocity points is midpoint between frames
+                    time_vel = time[:-1] + dt / 2
+                    dt_vel = np.diff(time_vel)
+                    dv = np.diff(velocity)
+                    accel_y = dv / dt_vel  # pixels per frame^2
+                    
+                    time_accel = time_vel[:-1] + dt_vel / 2
                     data_to_plot['accel'].append((time_accel, accel_y, label))
                     
         except Exception as e:
