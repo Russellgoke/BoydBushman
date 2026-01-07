@@ -5,6 +5,7 @@ import argparse
 import glob
 import numpy as np
 import mplcursors  # Used for hover-based information
+import re
 
 # --- Manual Configuration ---
 PLOT_X = False
@@ -21,6 +22,25 @@ def get_csv_files(inputs):
             csv_files.extend(folder_files)
     return sorted(list(set(csv_files)))
 
+def parse_ignore_ids(file_path):
+    """Read first line and extract IDs to ignore if it's a comment."""
+    ignore_ids = set()
+    with open(file_path, 'r') as f:
+        first_line = f.readline().strip()
+        if first_line.startswith('#'):
+            # Remove the # and parse comma/space separated IDs
+            content = first_line[1:].strip()
+            # Split by comma, semicolon, or whitespace
+            parts = re.split(r'[,;\s]+', content)
+            for part in parts:
+                part = part.strip()
+                if part:
+                    try:
+                        ignore_ids.add(int(part))
+                    except ValueError:
+                        raise ValueError(f"Invalid ID format in {file_path}: {part}")
+    return ignore_ids
+
 def plot_trajectories(file_list):
     if not file_list:
         print("No CSV files found.")
@@ -30,14 +50,21 @@ def plot_trajectories(file_list):
 
     for file in file_list:
         try:
-            df = pd.read_csv(file)
+            # Check for ignore list in first line comment
+            ignore_ids = parse_ignore_ids(file)
+            if ignore_ids:
+                print(f"Ignoring trajectory IDs {ignore_ids} from {os.path.basename(file)}")
+            
+            df = pd.read_csv(file, comment='#')
             fname = os.path.basename(file)
             for traj_id, group in df.groupby('trajectory_id'):
-                time = group['point_index'].values
+                if traj_id in ignore_ids:
+                    continue  # Skip ignored trajectories
+                frame_nums = group['frame_num'].values
+                start_frame = frame_nums[0]
+                time = frame_nums - start_frame  # Relative time from first frame
                 x_pos = group['x'].values
                 y_pos = group['y'].values
-                # Extract the start frame (assumes it's a column in your CSV)
-                start_frame = group['start_frame'].iloc[0] if 'start_frame' in group.columns else "N/A"
                 
                 label = f"File: {fname}\nID: {traj_id}\nStart Frame: {start_frame}"
                 
@@ -61,7 +88,7 @@ def plot_trajectories(file_list):
         
         ax.set_title(title)
         ax.set_ylabel(ylabel)
-        ax.set_xlabel("Frame Index (Relative)")
+        ax.set_xlabel("Frames Since Start")
         ax.grid(True, alpha=0.3)
         if invert_y:
             ax.invert_yaxis()

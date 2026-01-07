@@ -4,7 +4,7 @@ import numpy as np
 from datetime import datetime  # Added for timestamping
 
 #TODO sometimes splits into two objects idk why, if one is still wide enough fail
-START_FRAME = 27091
+START_FRAME = 0
 
 # --- Configuration ---
 VIDEO_PATH = r'Videos\35cropped.mov'
@@ -33,19 +33,18 @@ COLOR_ROI = (255, 0, 0)            # Blue for ROI box
 
 class FallingCandidate:
     def __init__(self, initial_pos, initial_frame):
-        self.positions = [initial_pos] # List of (x, y)
-        self.start_frame = initial_frame
+        self.positions = [(initial_frame, initial_pos[0], initial_pos[1])] # List of (frame_num, x, y)
         self.missed_frames = 0
         self.is_valid = False
         self.is_dead = False
 
-    def update(self, new_pos):
-        prev_x, prev_y = self.positions[-1]
+    def update(self, new_pos, frame_num):
+        _, prev_x, prev_y = self.positions[-1]
         new_x, new_y = new_pos
         
         # Kinematic Check: Must move DOWN (new_y > prev_y) and within X drift limits
         if new_y > prev_y and abs(new_x - prev_x) < MAX_X_DRIFT:
-            self.positions.append(new_pos)
+            self.positions.append((frame_num, new_x, new_y))
             self.missed_frames = 0
             if len(self.positions) >= MIN_FRAMES_TO_VALIDATE:
                 self.is_valid = True
@@ -77,20 +76,17 @@ def process_frame(roi_frame, backSub):
     return mask
 
 def save_to_csv(measurements):
-    """Saves all trajectories to a CSV file including the start frame."""
+    """Saves all trajectories to a CSV file with frame number per point."""
     if not measurements:
         print("No valid trajectories to save.")
         return
 
     with open(OUTPUT_CSV, mode='w', newline='') as f:
         writer = csv.writer(f)
-        # Added 'start_frame' to header
-        writer.writerow(['trajectory_id', 'start_frame', 'point_index', 'x', 'y'])
-        for t_id, data in enumerate(measurements):
-            start_frame = data['start_frame']
-            path = data['positions']
-            for p_idx, (px, py) in enumerate(path):
-                writer.writerow([t_id, start_frame, p_idx, px, py])
+        writer.writerow(['trajectory_id', 'point_index', 'frame_num', 'x', 'y'])
+        for t_id, positions in enumerate(measurements):
+            for p_idx, (frame_num, px, py) in enumerate(positions):
+                writer.writerow([t_id, p_idx, frame_num, px, py])
     
     print(f"Successfully saved {len(measurements)} trajectories to {OUTPUT_CSV}")
 
@@ -150,16 +146,17 @@ def main():
             best_dist = float('inf')
             best_match_idx = None
 
-            # Find nearest detection within MAX_VELOCITY radius                
+            # Find nearest detection within MAX_VELOCITY radius
+            _, last_x, last_y = cand.positions[-1]
             for i, det in enumerate(current_detections):
-                dist = np.linalg.norm(np.array(det) - np.array(cand.positions[-1]))
+                dist = np.linalg.norm(np.array(det) - np.array((last_x, last_y)))
                 if dist < MAX_VELOCITY and dist < best_dist: # Distance gate
                     best_dist = dist
                     best_match_idx = i # TODO two objects merge into one
             
             if best_match_idx is not None:
                 # Try to update. If update fails (e.g. moved up), treat as missed frame.
-                if cand.update(current_detections[best_match_idx]):
+                if cand.update(current_detections[best_match_idx], current_frame_num):
                     matched_detections_indices.add(best_match_idx)
                 else:
                         cand.increment_missed()
@@ -176,19 +173,16 @@ def main():
         # Cleanup: Move valid ones to final, remove dead ones could be done while looping above but whatever
         for i in range(len(candidates) - 1, -1, -1):
             cand = candidates[i]
-            last_pos = cand.positions[-1]                
+            _, last_x, last_y = cand.positions[-1]
             if cand.is_dead:
                 if cand.is_valid:
                     # Visualization: SUCCESS (Solid Green Circle)
-                    final_measurements.append({
-                        'positions': cand.positions,
-                        'start_frame': cand.start_frame
-                    })                    
+                    final_measurements.append(cand.positions)
                     print(f"Frame {current_frame_num}: Saved measurement ({len(cand.positions)} pts)")
-                    cv2.rectangle(frame, (last_pos[0]-20, last_pos[1]-20), (last_pos[0]+20, last_pos[1]+20), COLOR_SUCCESS, 3)      
+                    cv2.rectangle(frame, (last_x-20, last_y-20), (last_x+20, last_y+20), COLOR_SUCCESS, 3)      
                 else:
                     # Visualization: DELETED/FAILED (Red X)
-                    cv2.rectangle(frame, (last_pos[0]-15, last_pos[1]-15), (last_pos[0]+15, last_pos[1]+15), COLOR_DELETED, 2)
+                    cv2.rectangle(frame, (last_x-15, last_y-15), (last_x+15, last_y+15), COLOR_DELETED, 2)
                 candidates.pop(i)
 
         # 4. Visualize
@@ -196,7 +190,9 @@ def main():
             # Draw trail line
             if len(cand.positions) > 1:
                 for j in range(1, len(cand.positions)):
-                    cv2.line(frame, cand.positions[j-1], cand.positions[j], COLOR_TRACKING, 2)
+                    _, x1, y1 = cand.positions[j-1]
+                    _, x2, y2 = cand.positions[j]
+                    cv2.line(frame, (x1, y1), (x2, y2), COLOR_TRACKING, 2)
         # Draw ROI box
         cv2.rectangle(frame, (x, y), (x + w, y + h), COLOR_ROI, 2)
         
