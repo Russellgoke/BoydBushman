@@ -4,13 +4,14 @@ import numpy as np
 from datetime import datetime  # Added for timestamping
 
 #TODO sometimes splits into two objects idk why, if one is still wide enough fail
-START_FRAME = 3000
+START_FRAME = 14911
 
 # --- Configuration ---
-# VIDEO_PATH = r'Videos\35cropped.mov'
-VIDEO_PATH = r'Videos\MVI_1636.MP4'
+VIDEO_PATH = r'Videos\35cropped.mov'
+LANE_ROI = (659, 0, 130, 749)
+# VIDEO_PATH = r'Videos\MVI_1636.MP4'
 
-LANE_ROI = (639, 0, 113, 745)
+# LANE_ROI = (639, 0, 113, 745)
 MIN_FRAMES_TO_VALIDATE = 20  # Persistence threshold TODO calibrate
 TOP_ZONE_PERCENT = 0.1      # Must start in top 10% of ROI
 MAX_X_DRIFT = 20            # Max horizontal pixel shift between frames
@@ -135,8 +136,8 @@ def main():
                 # Visualization: Pink for too short
                 cv2.rectangle(frame, (abs_x, abs_y), (abs_x + mw, abs_y + mh), COLOR_TOO_SHORT, 1)
                 continue
-            # Skip if bounding box touches bottom of ROI (object clipping through edge)
-            if my + mh >= h:
+            # Skip if bounding box touches top or bottom of ROI (object clipping through edge)
+            if my <= 0 or my + mh >= h:
                 continue
             M = cv2.moments(cnt)
             if M["m00"] != 0:
@@ -208,7 +209,7 @@ def main():
         
         # Info Overlay
         cv2.putText(frame, f"Frame: {current_frame_num} Active: {len(candidates)} Saved: {len(final_measurements)}", 
-                    (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLOR_TRACKING, 2)
+                    (x-300, y+30), cv2.FONT_HERSHEY_SIMPLEX, 1, COLOR_DELETED, 2)
         cv2.imshow('Tracker', frame)
 
         # Handle keyboard input
