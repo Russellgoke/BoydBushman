@@ -10,7 +10,9 @@ import re
 # --- Manual Configuration ---
 PLOT_X = False
 PLOT_Y = False
-PLOT_ACCEL = True
+PLOT_ACCEL = False
+PLOT_ACCEL_HIST = True  # Histogram of accelerations from parabola fits
+PRINT_ACCEL_LIST = False  # Print sorted list of accelerations with ID and start frame
 
 def get_csv_files(inputs):
     csv_files = []
@@ -46,99 +48,178 @@ def parse_ignore_ids(file_path):
                             raise ValueError(f"Invalid ID format in {file_path}: {part}")
     return ignore_ids
 
-def plot_trajectories(file_list):
-    if not file_list:
-        print("No CSV files found.")
-        return
-
-    data_to_plot = {'x': [], 'y': [], 'accel': []}
+def collect_trajectory_data(file_list):
+    """Load CSV files and extract trajectory data for plotting."""
+    data = {'x': [], 'y': [], 'accel': []}
+    parabola_accels = []  # List of (accel, file, traj_id, start_frame) tuples
 
     for file in file_list:
         try:
-            # Check for ignore list in first line comment
             ignore_ids = parse_ignore_ids(file)
             if ignore_ids:
                 print(f"Ignoring trajectory IDs {ignore_ids} from {os.path.basename(file)}")
             
             df = pd.read_csv(file, comment='#')
             fname = os.path.basename(file)
+            
             for traj_id, group in df.groupby('trajectory_id'):
                 if traj_id in ignore_ids:
-                    continue  # Skip ignored trajectories
+                    continue
+                
                 frame_nums = group['frame_num'].values
                 start_frame = frame_nums[0]
-                time = frame_nums - start_frame  # Relative time from first frame
+                time = frame_nums - start_frame
                 x_pos = group['x'].values
                 y_pos = group['y'].values
-                
-                label = f"File: {fname}\nID: {traj_id}\nStart Frame: {start_frame}"
+                hover_label = f"File: {fname}\nID: {traj_id}\nStart Frame: {start_frame}"
                 
                 if PLOT_X:
-                    data_to_plot['x'].append((time, x_pos, label))
+                    data['x'].append((time, x_pos, fname, hover_label))
                 if PLOT_Y:
-                    data_to_plot['y'].append((time, y_pos, label))
+                    data['y'].append((time, y_pos, fname, hover_label))
                 if PLOT_ACCEL:
-                    # Calculate velocity accounting for frame gaps: v = dy/dt
-                    dt = np.diff(time)  # Frame differences (usually 1, but more if skipped)
-                    dy = np.diff(y_pos)
-                    velocity = dy / dt  # pixels per frame
-                    
-                    # Calculate acceleration: a = dv/dt
-                    # Time for velocity points is midpoint between frames
+                    if len(time) <= 3:
+                        print(f"Not enough data to calculate acceleration for {fname} ID {traj_id}")
+                        continue
+                    dt = np.diff(time)
+                    velocity = np.diff(y_pos) / dt
                     time_vel = time[:-1] + dt / 2
                     dt_vel = np.diff(time_vel)
-                    dv = np.diff(velocity)
-                    accel_y = dv / dt_vel  # pixels per frame^2
+                    accel_y = np.diff(velocity) / dt_vel
                     
                     time_accel = time_vel[:-1] + dt_vel / 2
-                    data_to_plot['accel'].append((time_accel, accel_y, label))
+                    data['accel'].append((time_accel, accel_y, fname, hover_label))
+                
+                if (PLOT_ACCEL_HIST or PRINT_ACCEL_LIST) and len(time) >= 3:
+                    coeffs = np.polyfit(time, y_pos, 2)
+                    accel_val = 2 * coeffs[0]
+                    parabola_accels.append((accel_val, fname, traj_id, start_frame))
                     
         except Exception as e:
             print(f"Error processing {file}: {e}")
+    
+    return data, parabola_accels
 
-    # Helper function to set up interactive hovering
-    def setup_interaction(title, data_list, ylabel, invert_y=False):
-        fig, ax = plt.subplots(num=title, figsize=(10, 6))
-        for t, val, lbl in data_list:
-            ax.plot(t, val, alpha=0.4, label=lbl) # Plot lines with some transparency
+def setup_interaction(title, data_list, ylabel, invert_y=False):
+    """Create an interactive plot window with hover labels, colored by file."""
+    fig, ax = plt.subplots(num=title, figsize=(10, 6))
+    
+    # Get unique files and assign colors
+    unique_files = list(dict.fromkeys(item[2] for item in data_list))  # Preserve order
+    colors = plt.cm.tab10.colors[:len(unique_files)]
+    file_to_color = {f: colors[i % len(colors)] for i, f in enumerate(unique_files)}
+    
+    # Track which files we've added to legend
+    legend_added = set()
+    
+    for t, val, fname, hover_label in data_list:
+        color = file_to_color[fname]
+        # Only add legend label for first trace of each file
+        if fname not in legend_added:
+            ax.plot(t, val, alpha=0.4, color=color, label=fname)
+            legend_added.add(fname)
+        else:
+            ax.plot(t, val, alpha=0.4, color=color)
+        # Store hover label on the line for mplcursors
+        ax.get_lines()[-1].set_gid(hover_label)
+    
+    ax.set_title(title)
+    ax.set_ylabel(ylabel)
+    ax.set_xlabel("Frames Since Start")
+    ax.grid(True, alpha=0.3)
+    if invert_y:
+        ax.invert_yaxis()
+    
+    # Add legend for files
+    if len(unique_files) > 1:
+        ax.legend(loc='best', fontsize=8)
+    
+    cursor = mplcursors.cursor(ax.get_lines(), hover=True)
+    
+    @cursor.connect("add")
+    def _(sel):
+        sel.annotation.set_text(sel.artist.get_gid())
+        sel.artist.set_alpha(1.0)
+        sel.artist.set_linewidth(2.5)
+
+    @cursor.connect("remove")
+    def _(sel):
+        sel.artist.set_alpha(0.4)
+        sel.artist.set_linewidth(1.5)
+
+    plt.tight_layout()
+
+def plot_trajectories(file_list):
+    if not file_list:
+        print("No CSV files found.")
+        return
+
+    data, parabola_accels = collect_trajectory_data(file_list)
+
+    if PLOT_X and data['x']:
+        setup_interaction("X Position", data['x'], "X Position (px)")
+    if PLOT_Y and data['y']:
+        setup_interaction("Y Position", data['y'], "Y Position (px)", invert_y=True)
+    if PLOT_ACCEL and data['accel']:
+        setup_interaction("Y Acceleration", data['accel'], "Acceleration (px/fr²)")
+    
+    if PLOT_ACCEL_HIST and parabola_accels:
+        fig, ax = plt.subplots(num="Acceleration Histogram (Parabola Fit)", figsize=(10, 6))
         
-        ax.set_title(title)
-        ax.set_ylabel(ylabel)
-        ax.set_xlabel("Frames Since Start")
+        # Group accelerations by file
+        file_data = {}
+        for accel_val, fname, traj_id, start_frame in parabola_accels:
+            if fname not in file_data:
+                file_data[fname] = []
+            file_data[fname].append(accel_val)
+        
+        # Get unique files and assign colors (matching the line plots)
+        unique_files = sorted(file_data.keys())
+        colors = plt.cm.tab10.colors[:len(unique_files)]
+        file_to_color = {f: colors[i % len(colors)] for i, f in enumerate(unique_files)}
+        
+        # Determine bins from all data
+        all_accel_values = [item[0] for item in parabola_accels]
+        bins = np.histogram_bin_edges(all_accel_values, bins='auto')
+        
+        # Plot overlapping histograms for each file
+        for fname in unique_files:
+            accel_vals = file_data[fname]
+            ax.hist(accel_vals, bins=bins, edgecolor='black', 
+                   alpha=0.6, color=file_to_color[fname], label=fname)
+        
+        ax.set_xlabel("Acceleration (px/fr²)")
+        ax.set_ylabel("Count")
         ax.grid(True, alpha=0.3)
-        if invert_y:
-            ax.invert_yaxis()
         
-        # Use mplcursors to show label on hover
-        cursor = mplcursors.cursor(ax.get_lines(), hover=True)
+        # Calculate and plot mean for each file
+        for fname in unique_files:
+            accel_vals = file_data[fname]
+            mean_accel = np.mean(accel_vals)
+            std_accel = np.std(accel_vals)
+            color = file_to_color[fname]
+            ax.axvline(mean_accel, color=color, linestyle='--', linewidth=2, 
+                      alpha=0.8, label=f'{fname} Mean: {mean_accel:.4f}')
         
-        @cursor.connect("add")
-        def _(sel):
-            # Show the label we defined earlier
-            sel.annotation.set_text(sel.artist.get_label())
-            # Briefly highlight the line
-            sel.artist.set_alpha(1.0)
-            sel.artist.set_linewidth(2.5)
-
-        @cursor.connect("remove")
-        def _(sel):
-            sel.artist.set_alpha(0.4)
-            sel.artist.set_linewidth(1.5)
-
+        # Calculate overall statistics for title
+        overall_mean = np.mean(all_accel_values)
+        overall_std = np.std(all_accel_values)
+        
+        # Add legend
+        ax.legend(loc='best', fontsize=8)
+        ax.set_title(f"Acceleration Histogram (n={len(all_accel_values)}, Overall μ={overall_mean:.4f}, σ={overall_std:.4f})")
         plt.tight_layout()
+    
+    if PRINT_ACCEL_LIST and parabola_accels:
+        sorted_accels = sorted(parabola_accels, key=lambda x: x[0])
+        print("\n--- Accelerations (sorted by value) ---")
+        print(f"{'Accel':>12}  {'File':<30}  {'ID':>4}  {'Start Frame':>11}")
+        print("-" * 65)
+        for accel_val, fname, traj_id, start_frame in sorted_accels:
+            print(f"{accel_val:>12.4f}  {fname:<30}  {traj_id:>4}  {start_frame:>11}")
 
-    # Trigger independent windows
-    if PLOT_X and data_to_plot['x']:
-        setup_interaction("X Position", data_to_plot['x'], "X Position (px)")
 
-    if PLOT_Y and data_to_plot['y']:
-        setup_interaction("Y Position", data_to_plot['y'], "Y Position (px)", invert_y=True)
-
-    if PLOT_ACCEL and data_to_plot['accel']:
-        setup_interaction("Y Acceleration", data_to_plot['accel'], "Acceleration (px/fr²)")
-
-    if any([PLOT_X, PLOT_Y, PLOT_ACCEL]):
-        print("Hover over lines to see file, ID, and start frame.")
+    if any([PLOT_X, PLOT_Y, PLOT_ACCEL, PLOT_ACCEL_HIST]):
         plt.show()
     else:
         print("No plots selected.")
