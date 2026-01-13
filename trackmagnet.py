@@ -1,18 +1,18 @@
 import cv2
 import csv
 import numpy as np
+import os
 from datetime import datetime  # Added for timestamping
 
 #TODO sometimes splits into two objects idk why, if one is still wide enough fail
-START_FRAME = 14911
+START_FRAME = 5800
 
 # --- Configuration ---
-VIDEO_PATH = r'Videos\35cropped.mov'
+VIDEO_PATH = r'Videos\MVI_1635.mp4' # 4800, attracting
 LANE_ROI = (659, 0, 130, 749)
-# VIDEO_PATH = r'Videos\MVI_1636.MP4'
-
+# VIDEO_PATH = r'Videos\MVI_1636.MP4', repelling
 # LANE_ROI = (639, 0, 113, 745)
-MIN_FRAMES_TO_VALIDATE = 20  # Persistence threshold TODO calibrate
+MIN_FRAMES_TO_VALIDATE = 20  # Persistence threshold
 TOP_ZONE_PERCENT = 0.1      # Must start in top 10% of ROI
 MAX_X_DRIFT = 20            # Max horizontal pixel shift between frames
 MAX_VELOCITY = 60             # Max distance to look for next match, accounting for missed frames
@@ -99,9 +99,42 @@ def save_to_csv(measurements):
     print(f"Successfully saved {len(measurements)} trajectories to {OUTPUT_CSV}")
 
 def main():
-    cap = cv2.VideoCapture(VIDEO_PATH)
+    # Check if video file exists, try alternate case if needed
+    video_path = VIDEO_PATH
+    if not os.path.exists(video_path):
+        # Try uppercase extension (Windows is case-insensitive but OpenCV might care)
+        alt_path = video_path.replace('.mp4', '.MP4')
+        if os.path.exists(alt_path):
+            print(f"Found video with uppercase extension: {alt_path}")
+            video_path = alt_path
+        else:
+            print(f"Error: Video file not found at {VIDEO_PATH}")
+            print(f"Also tried: {alt_path}")
+            print(f"Current working directory: {os.getcwd()}")
+            print("Please check the video path and try again.")
+            return
+    
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"Error: Could not open video file at {video_path}")
+        return
+    
+    # Verify video has frames
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total_frames == 0:
+        print(f"Error: Video file appears to be empty or invalid")
+        cap.release()
+        return
+    
+    print(f"Video loaded: {total_frames} frames")
+    if START_FRAME >= total_frames:
+        print(f"Warning: START_FRAME ({START_FRAME}) is beyond video length ({total_frames})")
+    
     lane_roi = initialize_roi(cap, LANE_ROI)
-    if lane_roi is None: return
+    if lane_roi is None:
+        print("Error: Could not initialize ROI")
+        cap.release()
+        return
 
     backSub = cv2.createBackgroundSubtractorMOG2(history=BACKGROUND_WINDOW_WIDTH, varThreshold=40, detectShadows=False)
     
@@ -111,6 +144,7 @@ def main():
     candidates = []
     final_measurements = []
     print("Controls: 'space': Pause/Play, 'a': Step Backwards 20, 's': Step Backward, 'd': Step Forward, 'f': Step Forward 20 frames, 'r': Reset, 'q': Quit")
+    print(f"Starting at frame {START_FRAME}. Press SPACE to start playback.")
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, START_FRAME)
     while cap.isOpened():
