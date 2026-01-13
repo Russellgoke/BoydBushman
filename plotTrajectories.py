@@ -9,13 +9,13 @@ import re
 
 # --- Manual Configuration ---
 PLOT_X = False
-PLOT_Y = False
+PLOT_Y = True
 PLOT_ACCEL = False
 PLOT_ACCEL_VS_TIME = True  # Plot acceleration vs time for all runs overlaid
-PLOT_ACCEL_VS_ID = True  # Plot acceleration vs trajectory ID number
+PLOT_ACCEL_VS_ID = False  # Plot acceleration vs trajectory ID number
 PLOT_ACCEL_HIST = True  # Histogram of accelerations from parabola fits
 PRINT_ACCEL_LIST = False  # Print sorted list of accelerations with ID and start frame
-SMOOTH_WINDOW = 0  # Smoothing window size (0 = no smoothing, e.g., 5 = smooth over 5 points)
+SMOOTH_WINDOW = 7  # Smoothing window size (0 = no smoothing, e.g., 5 = smooth over 5 points)
 
 def get_csv_files(inputs):
     csv_files = []
