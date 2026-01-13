@@ -4,14 +4,14 @@ import numpy as np
 from datetime import datetime  # Added for timestamping
 
 #TODO sometimes splits into two objects idk why, if one is still wide enough fail
-START_FRAME = 0
+REVERSE_VIDEO = True  # Play video backwards to avoid background contamination from stationary bottle
 
 # --- Configuration ---
 VIDEO_PATH = r'Videos\35cropped.mov'
 LANE_ROI = (1220, 0, 150, 894)
 # LANE_ROI = None
 MIN_FRAMES_TO_VALIDATE = 20  # Persistence threshold TODO calibrate
-BOTTOM_ZONE_PERCENT = 0.1      # Must start in top 10% of ROI
+TOP_ZONE_PERCENT = 0.1      # Must start in top 10% of ROI (when reversed, bottle "falls" from top)
 MAX_X_DRIFT = 20            # Max horizontal pixel shift between frames
 MAX_VELOCITY = 60             # Max distance to look for next match, accounting for missed frames
 MAX_MISSED_FRAMES = 3       # Grace period for flickering
@@ -43,8 +43,8 @@ class FallingCandidate:
         _, prev_x, prev_y = self.positions[-1]
         new_x, new_y = new_pos
         
-        # Kinematic Check: Must move UP (new_y < prev_y) and within X drift limits
-        if new_y < prev_y and abs(new_x - prev_x) < MAX_X_DRIFT:
+        # Kinematic Check: Must move DOWN (new_y > prev_y) when playing reversed
+        if new_y > prev_y and abs(new_x - prev_x) < MAX_X_DRIFT:
             self.positions.append((frame_num, new_x, new_y))
             self.missed_frames = 0
             if len(self.positions) >= MIN_FRAMES_TO_VALIDATE:
@@ -77,8 +77,9 @@ def process_frame(roi_frame, backSub):
     mask = cv2.dilate(mask, kernel, iterations=2)
     return mask
 
-def save_to_csv(measurements):
-    """Saves all trajectories to a CSV file with frame number per point."""
+def save_to_csv(measurements, reverse=False):
+    """Saves all trajectories to a CSV file with frame number per point.
+    If reverse=True, reverses each trajectory to restore original temporal order."""
     if not measurements:
         print("No valid trajectories to save.")
         return
@@ -87,7 +88,9 @@ def save_to_csv(measurements):
         writer = csv.writer(f)
         writer.writerow(['trajectory_id', 'point_index', 'frame_num', 'x', 'y'])
         for t_id, positions in enumerate(measurements):
-            for p_idx, (frame_num, px, py) in enumerate(positions):
+            # Reverse trajectory if video was played backwards
+            ordered_positions = list(reversed(positions)) if reverse else positions
+            for p_idx, (frame_num, px, py) in enumerate(ordered_positions):
                 writer.writerow([t_id, p_idx, frame_num, px, py])
     
     print(f"Successfully saved {len(measurements)} trajectories to {OUTPUT_CSV}")
@@ -104,13 +107,22 @@ def main():
     
     candidates = []
     final_measurements = []
-    print("Controls: 'space': Pause/Play, 'a': Step Backwards 20, 's': Step Backward, 'd': Step Forward, 'f': Step Forward 20 frames, 'r': Reset, 'q': Quit")
+    
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    if REVERSE_VIDEO:
+        print("Playing video in REVERSE to avoid background contamination")
+        print("Controls: 'space': Pause/Play, 'a/s': Step Forward (in real time), 'd/f': Step Backward (in real time), 'r': Reset, 'q': Quit")
+        current_frame_num = total_frames - 1
+    else:
+        print("Controls: 'space': Pause/Play, 'a': Back 20, 's': Back 1, 'd': Forward 1, 'f': Forward 20, 'r': Reset, 'q': Quit")
+        current_frame_num = 0
 
-    cap.set(cv2.CAP_PROP_POS_FRAMES, START_FRAME)
     while cap.isOpened():
+        cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame_num)
         ret, frame = cap.read()
-        if not ret: break
-        current_frame_num = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+        if not ret or current_frame_num < 0 or current_frame_num >= total_frames:
+            break
 
         # 1. Pre-process
         roi_frame = frame[y:y+h, x:x+w]
@@ -165,10 +177,10 @@ def main():
             else:
                 cand.increment_missed()
                 
-        # Check for new candidates
+        # Check for new candidates (in top zone when playing reversed)
         for i, det in enumerate(current_detections):
             if i not in matched_detections_indices:
-                if (det[1] - y) > (h * (1 - BOTTOM_ZONE_PERCENT)):
+                if (det[1] - y) < (h * TOP_ZONE_PERCENT):
                     candidates.append(FallingCandidate(det, current_frame_num))
                     # Visualization: Light Green hollow circle for new birth
                     cv2.rectangle(frame, (det[0]-15, det[1]-15), (det[0]+15, det[1]+15), COLOR_NEW_CANDIDATE, 2)
@@ -200,7 +212,7 @@ def main():
         
         # Info Overlay
         cv2.putText(frame, f"Frame: {current_frame_num} Active: {len(candidates)} Saved: {len(final_measurements)}", 
-                    (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLOR_TRACKING, 2)
+                    (x, y+100), cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLOR_DELETED, 2)
         cv2.imshow('Tracker', frame)
 
         # Handle keyboard input
@@ -212,17 +224,29 @@ def main():
             if key == ord(' '):
                 paused = not paused
                 break
-            elif key == ord('a'): # Step Backward 20
-                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, current_frame_num - 20))
+            elif key == ord('a'): # Step 20 (backwards in video time = forward in real time when reversed)
+                if REVERSE_VIDEO:
+                    current_frame_num = min(total_frames - 1, current_frame_num + 20)
+                else:
+                    current_frame_num = max(0, current_frame_num - 20)
                 break
-            elif key == ord('s'): # Step Backward
-                # Set to current frame - 2 because the next loop iteration will cap.read() + 1
-                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, current_frame_num - 2))
+            elif key == ord('s'): # Step 1
+                if REVERSE_VIDEO:
+                    current_frame_num = min(total_frames - 1, current_frame_num + 1)
+                else:
+                    current_frame_num = max(0, current_frame_num - 1)
                 break
-            elif key == ord('d'): # Step Forward
+            elif key == ord('d'): # Step 1
+                if REVERSE_VIDEO:
+                    current_frame_num = max(0, current_frame_num - 1)
+                else:
+                    current_frame_num = min(total_frames - 1, current_frame_num + 1)
                 break 
-            elif key == ord('f'): #step 20
-                cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame_num + 20)
+            elif key == ord('f'): # Step 20
+                if REVERSE_VIDEO:
+                    current_frame_num = max(0, current_frame_num - 20)
+                else:
+                    current_frame_num = min(total_frames - 1, current_frame_num + 20)
                 break
             elif key == ord('r'):
                 backSub = cv2.createBackgroundSubtractorMOG2(history=BACKGROUND_WINDOW_WIDTH, varThreshold=40)
@@ -230,16 +254,20 @@ def main():
             elif key == ord('q'):
                 cap.release()
                 cv2.destroyAllWindows()
-                save_to_csv(final_measurements)
+                save_to_csv(final_measurements, reverse=REVERSE_VIDEO)
                 return
             
-            # If not paused, exit the inner loop to process the next frame automatically
+            # If not paused, auto-step to next frame
             if not paused:
+                if REVERSE_VIDEO:
+                    current_frame_num -= 1
+                else:
+                    current_frame_num += 1
                 break
 
     cap.release()
     cv2.destroyAllWindows()
-    save_to_csv(final_measurements)
+    save_to_csv(final_measurements, reverse=REVERSE_VIDEO)
 
 if __name__ == "__main__":
     main()
