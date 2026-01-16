@@ -10,6 +10,7 @@ START_FRAME = 5800
 # --- Configuration ---
 VIDEO_PATH = r'Videos\MVI_1635.mp4' # 4800, attracting
 LANE_ROI = (659, 0, 130, 749)
+CROP_VIEW = (659, 0, 130, 749)  # Set to None to select interactively, or (x, y, w, h) tuple for default
 # VIDEO_PATH = r'Videos\MVI_1636.MP4', repelling
 # LANE_ROI = (639, 0, 113, 745)
 MIN_FRAMES_TO_VALIDATE = 20  # Persistence threshold
@@ -70,6 +71,18 @@ def initialize_roi(cap, default_roi):
         print(f"Selected ROI: ({roi[0]}, {roi[1]}, {roi[2]}, {roi[3]})")
         return roi
     return default_roi
+
+def initialize_crop_view(cap, default_crop):
+    """Handles crop view selection or uses the hardcoded default."""
+    ret, first_frame = cap.read()
+    if not ret: return None
+    if default_crop is None:
+        print("Select the crop view region to display, then press SPACE.")
+        crop = cv2.selectROI("Select Crop View", first_frame, fromCenter=False)
+        cv2.destroyWindow("Select Crop View")
+        print(f"Selected crop view: ({crop[0]}, {crop[1]}, {crop[2]}, {crop[3]})")
+        return crop
+    return default_crop
 
 def process_frame(roi_frame, backSub):
     """Cleans up noise using morphological operations."""
@@ -136,6 +149,12 @@ def main():
         cap.release()
         return
 
+    crop_view = initialize_crop_view(cap, CROP_VIEW)
+    # Check if crop view was cancelled or invalid (width/height = 0)
+    if crop_view is None or (crop_view[2] == 0 or crop_view[3] == 0):
+        # If no crop view selected, use full frame (set to None to disable cropping)
+        crop_view = None
+
     backSub = cv2.createBackgroundSubtractorMOG2(history=BACKGROUND_WINDOW_WIDTH, varThreshold=40, detectShadows=False)
     
     paused = True
@@ -145,6 +164,9 @@ def main():
     final_measurements = []
     print("Controls: 'space': Pause/Play, 'a': Step Backwards 20, 's': Step Backward, 'd': Step Forward, 'f': Step Forward 20 frames, 'r': Reset, 'q': Quit")
     print(f"Starting at frame {START_FRAME}. Press SPACE to start playback.")
+
+    # Create resizable window
+    cv2.namedWindow('Tracker', cv2.WINDOW_NORMAL)
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, START_FRAME)
     while cap.isOpened():
@@ -241,10 +263,19 @@ def main():
         # Draw ROI box
         cv2.rectangle(frame, (x, y), (x + w, y + h), COLOR_ROI, 2)
         
-        # Info Overlay
-        cv2.putText(frame, f"Frame: {current_frame_num} Active: {len(candidates)} Saved: {len(final_measurements)}", 
-                    (x-300, y+30), cv2.FONT_HERSHEY_SIMPLEX, 1, COLOR_DELETED, 2)
-        cv2.imshow('Tracker', frame)
+        # Apply crop view if specified
+        display_frame = frame
+        if crop_view is not None:
+            cx, cy, cw, ch = [int(v) for v in crop_view]
+            display_frame = frame[cy:cy+ch, cx:cx+cw]
+        
+        # Info Overlay - drawn on cropped display frame at top left
+        cv2.putText(display_frame, f"{current_frame_num}", 
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, COLOR_DELETED, 2)
+        cv2.putText(display_frame, f"{len(final_measurements)}", 
+                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, COLOR_DELETED, 2)
+        
+        cv2.imshow('Tracker', display_frame)
 
         # Handle keyboard input
         while True:
