@@ -5,14 +5,15 @@ import os
 from datetime import datetime  # Added for timestamping
 
 #TODO sometimes splits into two objects idk why, if one is still wide enough fail
-START_FRAME = 5800
+START_FRAME = 44040
 
 # --- Configuration ---
-VIDEO_PATH = r'Videos\MVI_1635.mp4' # 4800, attracting
-LANE_ROI = (659, 0, 130, 749)
-CROP_VIEW = (659, 0, 130, 749)  # Set to None to select interactively, or (x, y, w, h) tuple for default
-# VIDEO_PATH = r'Videos\MVI_1636.MP4', repelling
-# LANE_ROI = (639, 0, 113, 745)
+# VIDEO_PATH = r'Videos\MVI_1635.mp4' # 4800, attracting
+# LANE_ROI = (659, 0, 130, 749)
+# CROP_VIEW = None #(659, 0, 130, 749)  # Set to None to select interactively, or (x, y, w, h) tuple for default
+VIDEO_PATH = r'Videos\MVI_1636.MP4' # repelling
+LANE_ROI = (609, 0, 143, 749)
+CROP_VIEW = None # (639, 0, 130, 749)  # Set to None to select interactively, or (x, y, w, h) tuple for default
 MIN_FRAMES_TO_VALIDATE = 20  # Persistence threshold
 TOP_ZONE_PERCENT = 0.1      # Must start in top 10% of ROI
 MAX_X_DRIFT = 20            # Max horizontal pixel shift between frames
@@ -92,12 +93,33 @@ def process_frame(roi_frame, backSub):
     mask = cv2.dilate(mask, kernel, iterations=2)
     return mask
 
+def filter_trailing_skip(positions):
+    """Remove trailing single frame if it skipped frames before it.
+    
+    If the last frame skipped (frame_num gap > 1 from second-to-last) and
+    there's only one frame after the skip, remove it as it's likely noise.
+    """
+    if len(positions) < 2:
+        return positions
+    
+    last_frame = positions[-1][0]
+    second_last_frame = positions[-2][0]
+    
+    if last_frame - second_last_frame > 1:
+        # Last frame skipped - remove it
+        return positions[:-1]
+    
+    return positions
+
 def save_to_csv(measurements):
     """Saves all trajectories to a CSV file with frame number per point."""
     if not measurements:
         print("No valid trajectories to save.")
         return
 
+    # Filter out trailing single-frame skips from each trajectory
+    filtered_measurements = [filter_trailing_skip(pos) for pos in measurements]
+    
     with open(OUTPUT_CSV, mode='w', newline='') as f:
         # Write metadata comment
         f.write(f"#META: VIDEO={VIDEO_PATH}, ROI={LANE_ROI}, TIMESTAMP={TIMESTAMP}\n")
@@ -105,11 +127,11 @@ def save_to_csv(measurements):
         f.write("#OUTLIERS:\n")
         writer = csv.writer(f)
         writer.writerow(['trajectory_id', 'point_index', 'frame_num', 'x', 'y'])
-        for t_id, positions in enumerate(measurements):
+        for t_id, positions in enumerate(filtered_measurements):
             for p_idx, (frame_num, px, py) in enumerate(positions):
                 writer.writerow([t_id, p_idx, frame_num, px, py])
     
-    print(f"Successfully saved {len(measurements)} trajectories to {OUTPUT_CSV}")
+    print(f"Successfully saved {len(filtered_measurements)} trajectories to {OUTPUT_CSV}")
 
 def main():
     # Check if video file exists, try alternate case if needed
@@ -167,6 +189,17 @@ def main():
 
     # Create resizable window
     cv2.namedWindow('Tracker', cv2.WINDOW_NORMAL)
+    
+    # Set initial window size to match display frame dimensions (maintains aspect ratio)
+    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    if crop_view is not None:
+        display_width = crop_view[2]
+        display_height = crop_view[3]
+    else:
+        display_width = frame_width
+        display_height = frame_height
+    cv2.resizeWindow('Tracker', display_width, display_height)
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, START_FRAME)
     while cap.isOpened():
