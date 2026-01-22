@@ -29,6 +29,15 @@ This project provides tools to:
     └── *.MP4               # Source video recordings
 ```
 
+## Video Sources
+
+The source video recordings used in this analysis are available on Google Drive:
+
+- [MVI_1635.MP4 (Attracting configuration)](https://drive.google.com/file/d/1i7MLJ87Q46n6Nftmq-XlbmNFEyhirVyn/view?usp=sharing)
+- [MVI_1636.MP4 (Repelling configuration)](https://drive.google.com/file/d/1h-OUpiATpLf5LY-_PWcl8N1MK6_FQxuj/view?usp=sharing)
+
+Download these files and place them in the `Videos/` folder to run the tracking tools.
+
 ## Requirements
 
 - Python 3.x
