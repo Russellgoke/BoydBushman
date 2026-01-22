@@ -15,7 +15,8 @@ PLOT_ACCEL_VS_TIME = True  # Plot acceleration vs time for all runs overlaid
 PLOT_ACCEL_VS_ID = False  # Plot acceleration vs trajectory ID number
 PLOT_ACCEL_HIST = True  # Histogram of accelerations from parabola fits
 PRINT_ACCEL_LIST = False  # Print sorted list of accelerations with ID and start frame
-SMOOTH_WINDOW = 7  # Smoothing window size (0 = no smoothing, e.g., 5 = smooth over 5 points)
+PRINT_STATS = True  # Print mean/std dev treating each drop as a trial AND each frame as a trial
+SMOOTH_WINDOW = 0  # Smoothing window size (0 = no smoothing, e.g., 5 = smooth over 5 points)
 
 def get_csv_files(inputs):
     csv_files = []
@@ -103,7 +104,7 @@ def collect_trajectory_data(file_list):
                     data['x'].append((time, x_pos, fname, hover_label))
                 if PLOT_Y:
                     data['y'].append((time_smooth, y_pos_smooth, fname, hover_label))
-                if PLOT_ACCEL or PLOT_ACCEL_VS_TIME or PLOT_ACCEL_VS_ID:
+                if PLOT_ACCEL or PLOT_ACCEL_VS_TIME or PLOT_ACCEL_VS_ID or PRINT_STATS:
                     if len(time_smooth) <= 3:
                         print(f"Not enough data to calculate acceleration for {fname} ID {traj_id}")
                         continue
@@ -127,7 +128,7 @@ def collect_trajectory_data(file_list):
                         accel_for_plot = accel_y
                         time_for_plot = time_accel
                     
-                    if PLOT_ACCEL or PLOT_ACCEL_VS_TIME:
+                    if PLOT_ACCEL or PLOT_ACCEL_VS_TIME or PRINT_STATS:
                         data['accel'].append((time_for_plot, accel_for_plot, fname, hover_label))
                     
                     if PLOT_ACCEL_VS_ID:
@@ -135,7 +136,7 @@ def collect_trajectory_data(file_list):
                         mean_accel = np.mean(accel_for_plot)
                         accel_vs_id.append((traj_id, mean_accel, fname))
                 
-                if (PLOT_ACCEL_HIST or PRINT_ACCEL_LIST) and len(time) >= 3:
+                if (PLOT_ACCEL_HIST or PRINT_ACCEL_LIST or PRINT_STATS) and len(time) >= 3:
                     coeffs = np.polyfit(time, y_pos, 2)
                     accel_val = 2 * coeffs[0]
                     parabola_accels.append((accel_val, fname, traj_id, start_frame))
@@ -294,6 +295,92 @@ def plot_trajectories(file_list):
         for accel_val, fname, traj_id, start_frame in sorted_accels:
             print(f"{accel_val:>12.4f}  {fname:<30}  {traj_id:>4}  {start_frame:>11}")
 
+    if PRINT_STATS:
+        print("\n" + "=" * 80)
+        print("ACCELERATION STATISTICS")
+        print("=" * 80)
+        
+        # === PER-DROP STATISTICS ===
+        print("\n" + "-" * 80)
+        print("PER-DROP STATISTICS (each drop as a trial, parabola fit)")
+        print("-" * 80)
+        
+        if parabola_accels:
+            # Group by file
+            drop_by_file = {}
+            for accel_val, fname, traj_id, start_frame in parabola_accels:
+                if fname not in drop_by_file:
+                    drop_by_file[fname] = []
+                drop_by_file[fname].append(accel_val)
+            
+            # Print stats for each file
+            for fname in sorted(drop_by_file.keys()):
+                accels = np.array(drop_by_file[fname])
+                mean_val = np.mean(accels)
+                std_val = np.std(accels, ddof=1) if len(accels) > 1 else 0.0
+                stderr = std_val / np.sqrt(len(accels)) if len(accels) > 1 else 0.0
+                
+                print(f"\n{fname}:")
+                print(f"  n = {len(accels)} drops")
+                print(f"  Mean: {mean_val:.6f} px/fr²")
+                print(f"  Std Dev: {std_val:.6f} px/fr²")
+                print(f"  Std Error: {stderr:.6f} px/fr²")
+            
+            # Overall statistics
+            all_drop_accels = np.array([item[0] for item in parabola_accels])
+            overall_mean = np.mean(all_drop_accels)
+            overall_std = np.std(all_drop_accels, ddof=1)
+            overall_stderr = overall_std / np.sqrt(len(all_drop_accels))
+            
+            print(f"\nOVERALL (all files combined):")
+            print(f"  n = {len(all_drop_accels)} drops")
+            print(f"  Mean: {overall_mean:.6f} px/fr²")
+            print(f"  Std Dev: {overall_std:.6f} px/fr²")
+            print(f"  Std Error: {overall_stderr:.6f} px/fr²")
+        else:
+            print("\nNo parabola fit data available")
+        
+        # === PER-FRAME STATISTICS ===
+        print("\n" + "-" * 80)
+        print("PER-FRAME STATISTICS (each frame-to-frame measurement as a trial)")
+        print("-" * 80)
+        
+        if data['accel']:
+            # Group by file
+            frame_by_file = {}
+            for time_data, accel_data, fname, hover_label in data['accel']:
+                if fname not in frame_by_file:
+                    frame_by_file[fname] = []
+                frame_by_file[fname].extend(accel_data)
+            
+            # Print stats for each file
+            for fname in sorted(frame_by_file.keys()):
+                accels = np.array(frame_by_file[fname])
+                mean_val = np.mean(accels)
+                std_val = np.std(accels, ddof=1) if len(accels) > 1 else 0.0
+                stderr = std_val / np.sqrt(len(accels)) if len(accels) > 1 else 0.0
+                
+                print(f"\n{fname}:")
+                print(f"  n = {len(accels)} measurements")
+                print(f"  Mean: {mean_val:.6f} px/fr²")
+                print(f"  Std Dev: {std_val:.6f} px/fr²")
+                print(f"  Std Error: {stderr:.6f} px/fr²")
+            
+            # Overall statistics
+            all_frame_accels = np.concatenate([item[1] for item in data['accel']])
+            overall_mean = np.mean(all_frame_accels)
+            overall_std = np.std(all_frame_accels, ddof=1)
+            overall_stderr = overall_std / np.sqrt(len(all_frame_accels))
+            
+            print(f"\nOVERALL (all files combined):")
+            print(f"  n = {len(all_frame_accels)} measurements")
+            print(f"  Mean: {overall_mean:.6f} px/fr²")
+            print(f"  Std Dev: {overall_std:.6f} px/fr²")
+            print(f"  Std Error: {overall_stderr:.6f} px/fr²")
+        else:
+            print("\nNo frame-by-frame acceleration data available")
+        
+        print("\n" + "=" * 80 + "\n")
 
     if any([PLOT_X, PLOT_Y, PLOT_ACCEL, PLOT_ACCEL_VS_TIME, PLOT_ACCEL_VS_ID, PLOT_ACCEL_HIST]):
         plt.show()
