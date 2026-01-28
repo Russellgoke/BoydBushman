@@ -1,6 +1,6 @@
 # Boyd Bushman Magnet Drop Experiment Analysis
 
-A Python toolkit for tracking and analyzing the trajectories of falling magnets from video recordings. This project was created to investigate claims about anomalous acceleration behavior in magnetized objects.
+A Python toolkit for tracking and analyzing the trajectories of falling magnets from video recordings. This project was created to investigate claims about anomalous acceleration behavior in magnetized objects. See details on the project on [Hackaday](url).
 
 ## Overview
 
